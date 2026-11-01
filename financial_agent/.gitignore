@@ -1,0 +1,22 @@
+# Segredos — nunca versionar
+secrets/
+token.json
+client_secret*.json
+
+# Saídas de execução
+out/
+backups/
+
+# Dados de fatura (contêm informação financeira)
+*.pdf
+*.csv
+!tests/fixtures/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Config local
+config.local.json

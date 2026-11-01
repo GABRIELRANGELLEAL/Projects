@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Remove-Item \"C:\\\\Users\\\\Leal\\\\AI\\\\Projects\\\\financial_agent\\\\PLANO.md\" -Confirm:$false)"
+    ]
+  }
+}
