@@ -110,19 +110,26 @@ def test_detecta_formato_decide_por_maioria() -> None:
 def test_abril_e_formato_americano() -> None:
     r = parse_fatura_detalhado(FIXTURE_ABRIL, "2026-04")
     assert r.formato == "us"
-    assert r.quantidade == 72
-    assert r.total == Decimal("6156.63")
+    assert r.quantidade == 70
+    assert r.total == Decimal("6151.14")
 
 
-def test_abril_tem_devolucao_de_iof_orfa() -> None:
-    """Espelho do caso de agosto: aqui sobra devolução, não cobrança."""
+def test_abril_tem_os_pares_de_iof_fechados() -> None:
+    """Abril usa o título sem comerciante e seus 2 pares de IOF fecham exatos.
+
+    Era aqui que a falta do padrão ``^IOF de compra internacional`` aparecia: as
+    2 cobranças entravam como gasto real e o resíduo do ciclo dava -R$ 5,49,
+    exatamente o valor que vazava. Com o padrão no lugar o resíduo é zero — o
+    que é a evidência de que as duas pontas estão sendo descartadas.
+    """
     r = parse_fatura_detalhado(FIXTURE_ABRIL, "2026-04")
     assert r.descartados_por_regra == {
         "^IOF de volta de ": 2,
+        "^IOF de compra internacional": 2,
         '^Crédito de "': 1,
         "^Pagamento recebido": 1,
     }
-    assert r.residuo_iof == Decimal("-5.49")
+    assert r.residuo_iof == Decimal("0.00")
 
 
 def test_credito_de_e_filtrado() -> None:
@@ -219,12 +226,13 @@ def test_extrai_parcela(titulo: str, esperado: str | None) -> None:
 # Regras carregadas do markdown
 # --------------------------------------------------------------------------
 
-def test_carrega_as_quatro_regras() -> None:
+def test_carrega_as_regras_de_descarte() -> None:
     regras = carrega_regras()
     padroes = [r.padrao for r in regras.ignorados]
     assert padroes == [
         "^IOF de volta de ",
         '^IOF de "',
+        "^IOF de compra internacional",
         '^Estorno de "',
         '^Crédito de "',
         "^Pagamento recebido",
@@ -357,6 +365,34 @@ def test_contrato_publico_parse_fatura() -> None:
 # --------------------------------------------------------------------------
 # Rejeição de CSV malformado
 # --------------------------------------------------------------------------
+
+def test_descarta_iof_nos_dois_titulos(tmp_path: Path) -> None:
+    """As duas formas da cobrança de IOF são descartadas, e a compra fica.
+
+    O Nubank exporta a mesma cobrança como ``IOF de "<comerciante>"`` e como
+    ``IOF de compra internacional``. Descartar só uma delas é pior que não
+    descartar nenhuma: a devolução sai e a cobrança fica, inflando o ciclo.
+    """
+    csv = tmp_path / "Nubank_2026-11-25.csv"
+    csv.write_text(
+        "date,title,amount\n"
+        '2026-11-03,"IOF de ""Lidl Gran Via""","9,35"\n'
+        "2026-11-03,IOF de compra internacional,\"3,98\"\n"
+        "2026-11-03,IOF de volta de Lidl Gran Via,\"- 9,35\"\n"
+        "2026-11-03,IOF de volta de Anthropic* Claude Sub,\"- 3,98\"\n"
+        "2026-11-03,Lidl Gran Via,\"267,20\"\n",
+        encoding="utf-8",
+    )
+    r = parse_fatura_detalhado(csv, ciclo="2026-11")
+    assert [l.titulo for l in r.mantidos] == ["Lidl Gran Via"]
+    assert r.total == Decimal("267.20")
+    assert r.descartados_por_regra == {
+        "^IOF de volta de ": 2,
+        '^IOF de "': 1,
+        "^IOF de compra internacional": 1,
+    }
+    assert r.residuo_iof == Decimal("0.00")
+
 
 def test_rejeita_cabecalho_errado(tmp_path: Path) -> None:
     ruim = tmp_path / "x.csv"
