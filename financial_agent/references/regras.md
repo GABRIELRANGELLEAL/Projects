@@ -41,7 +41,11 @@ O padrão `^IOF de compra internacional` estava faltando, e o efeito era assimé
 - `2026-11`: 81 cobranças, **R$ 251,97**, entravam como gasto real. Com o padrão no lugar, o resíduo do ciclo cai de -R$ 251,03 para R$ 0,94.
 - `2026-04`: 2 cobranças, R$ 5,49, pelo mesmo motivo. O resíduo do ciclo vai a **R$ 0,00** — os pares de abril fecham exatos, o que é a melhor evidência de que o padrão está certo.
 
-Consequência para o relatório: a seção de consumo no exterior deduz o comerciante internacional do título da cobrança (`RE_IOF` em `scripts/relatorio.py`, ancorado no formato com aspas). Num ciclo que usa `IOF de compra internacional` o título não carrega o nome, então essa seção não consegue atribuir valor por comerciante. O nome ainda existe nas **devoluções**, que são a fonte alternativa — mas a devolução costuma cair um ciclo depois da compra, então trocar a fonte muda a semântica da seção e não foi feito aqui.
+Consequência para o relatório: a seção de consumo no exterior deduz o comerciante internacional do título do IOF, e o formato novo não carrega nome nenhum. Por isso `comerciantes_internacionais` em `scripts/relatorio.py` lê as **duas pontas** do par — a cobrança no formato antigo e a devolução (`IOF de volta de X`), que traz o nome em todos os ciclos.
+
+Isso foi medido antes de entrar: nos quatro ciclos em que as duas fontes existem (`2026-07` a `2026-10`) o percentual de exterior sai **idêntico** pelos dois caminhos — 51,6%, 65,1%, 77,8% e 87,6%. Nos ciclos de formato novo só a devolução produz número: `2026-11` dava 0% e o real é 87,8%.
+
+Ressalva que vem junto: a devolução costuma cair um ciclo depois da compra, então um comerciante pode ser contado no ciclo da devolução em vez do da compra. O descasamento é exatamente o que o resíduo de IOF mede, e é de centavos nos ciclos medidos (R$ 0,94 em `2026-11`).
 
 ### Os pares de IOF NÃO se cancelam exatamente dentro de um ciclo
 
@@ -81,7 +85,10 @@ Palavras-chave que marcam um comerciante como assinatura digital, usadas pelo re
 - `clube livelo` — programa de pontos
 - `openai` — ChatGPT
 
-**Cuidado conhecido:** `Spiti*Finclass` parece assinatura mas é parcelamento (`Parcela 11/12`) e acaba sozinho, por isso não está na lista. Se um dia virar assinatura de verdade, acrescente aqui.
+**Cuidados conhecidos**, os dois do mesmo tipo — a comparação é por substring, então um nome de comerciante pode conter uma palavra-chave sem ser assinatura:
+
+- `Spiti*Finclass` parece assinatura mas é parcelamento (`Parcela 11/12`) e acaba sozinho, por isso não está na lista. Se um dia virar assinatura de verdade, acrescente aqui.
+- `disney` pega **`Euro Disney`**, que é o parque em Paris, não o streaming — em `2026-11` são R$ 818,75 de ingresso classificados como assinatura, mais `Euro Disney Associe` e `Euro Disney Associes`. Tirar a palavra-chave não serve: ela é o que pega o `Disney Plus` de verdade. O relatório disfarça o problema porque só mostra serviços presentes em 2 ou mais ciclos, e o parque aparece em um só — mas a lista bruta de assinaturas mostra os três.
 
 ## Detecção de parcelamento
 

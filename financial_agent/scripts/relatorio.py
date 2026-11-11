@@ -24,9 +24,15 @@ from regras import carrega_assinaturas, e_assinatura
 RAIZ = Path(__file__).resolve().parent.parent
 RE_SUFIXO_PARCELA = re.compile(r"\s*-\s*Parcela \d+/\d+\s*$")
 
-#: Comerciante com IOF cobrado = compra internacional. O IOF é filtrado antes de
-#: chegar à planilha, então estas seções leem os CSVs originais de ``out/``.
-RE_IOF = re.compile(r'^IOF de "(.+)"$')
+#: Comerciante com IOF = compra internacional. O IOF é filtrado antes de chegar
+#: à planilha, então estas seções leem os CSVs originais de ``out/``.
+#:
+#: São dois padrões porque a **cobrança** só traz o nome do comerciante no
+#: formato antigo. O formato novo é ``IOF de compra internacional``, sem nome
+#: nenhum — ver ``references/regras.md``. A **devolução** traz o nome em todos
+#: os ciclos, e é ela que sustenta a seção quando a cobrança não serve.
+RE_IOF_COBRANCA = re.compile(r'^IOF de "(.+)"$')
+RE_IOF_DEVOLUCAO = re.compile(r"^IOF de volta de (.+)$")
 PREFIXO_PIX = "Pix no Crédito"
 
 
@@ -159,6 +165,32 @@ def secao_recorrentes(linhas: list[dict], top: int = 15) -> None:
         print(f"  {titulo[:40]:<40} {n}/{len(ciclos)} {brl(Decimal(media)):>12} /ciclo")
 
 
+def comerciantes_internacionais(resultado) -> set[str]:
+    """Comerciantes com IOF no ciclo — a única pista de compra fora do país.
+
+    Lê as **duas pontas** do par de IOF, porque nenhuma sozinha cobre todos os
+    ciclos: a cobrança só traz o nome no formato antigo (``IOF de "X"``), e o
+    formato novo (``IOF de compra internacional``) não traz nome nenhum. A
+    devolução (``IOF de volta de X``) traz em todos.
+
+    Medido nos quatro ciclos em que as duas fontes existem (2026-07 a 2026-10),
+    o percentual de exterior sai idêntico pelos dois caminhos — é o que mostra
+    que somar a devolução não distorce. Nos ciclos de formato novo só ela
+    produz número: em 2026-11 a seção dava 0%, e o real é 87,8%.
+
+    Ressalva: a devolução costuma cair um ciclo depois da compra, então um
+    comerciante pode ser contado no ciclo da devolução. O resíduo de IOF por
+    ciclo (``ResultadoParse.residuo_iof``) mede esse descasamento e é de
+    centavos nos ciclos medidos.
+    """
+    nomes: set[str] = set()
+    for lanc, _ in resultado.descartados:
+        for padrao in (RE_IOF_COBRANCA, RE_IOF_DEVOLUCAO):
+            if achado := padrao.match(lanc.titulo):
+                nomes.add(achado.group(1))
+    return nomes
+
+
 def secao_csvs(pasta: Path) -> None:
     """Indicadores que só os CSVs originais permitem calcular.
 
@@ -180,11 +212,7 @@ def secao_csvs(pasta: Path) -> None:
         ciclo = ciclo_do_nome(caminho.name)
         r = parse_fatura_detalhado(caminho, ciclo)
 
-        internacionais = {
-            achado.group(1)
-            for lanc, _ in r.descartados
-            if (achado := RE_IOF.match(lanc.titulo))
-        }
+        internacionais = comerciantes_internacionais(r)
         pix = consumo = intl = Decimal(0)
         for l in r.mantidos:
             if l.titulo.startswith(PREFIXO_PIX):

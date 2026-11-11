@@ -255,7 +255,7 @@ O git CLI **não está instalado** nesta máquina, e `financial_agent/` está *u
 
 Pontos de checagem, em ordem. Cada um é barato de corrigir onde está e caro de descobrir depois.
 
-1. **Testes offline** — `python -m pytest tests -q`. São 66, rodam em 0,1s e validam o parser contra o CSV real de agosto (`tests/fixtures/Nubank_2026-08-25.csv`, 4405 bytes, idêntico ao do Drive): 54 lançamentos, R$ 5.072,63, os 47 descartes distribuídos pelas 4 regras.
+1. **Testes offline** — `python -m pytest tests -q`. São 85, rodam em 0,1s e validam o parser contra o CSV real de agosto (`tests/fixtures/Nubank_2026-08-25.csv`, 4405 bytes, idêntico ao do Drive): 54 lançamentos, R$ 5.072,63, os 47 descartes distribuídos pelas 4 regras.
 2. **Auth** — `--auth-check` deve imprimir a conta `gabrielrangelleal@gmail.com` e os três escopos.
 3. **Parse do ciclo de setembro — a checagem que mais importa.** Rodar com `--csv` sobre `Nubank_2026-09-25.csv` e conferir contra o que você já validou à mão na planilha: **211 lançamentos** e total **R$ 20.075,50**. Se as regras de filtro reproduzem esses dois números, o parser está provado contra dado real; se não, as regras estão erradas — e isso aparece antes de qualquer escrita.
 4. **Planilha** — dry-run primeiro. `apagaria 0` significa que nenhum ciclo existente será tocado; `apagaria N, escritas N` significa que o ciclo está sendo substituído por si mesmo, o que é a prova de idempotência. Para testar sem risco, fazer uma cópia de `life` no Drive e apontar `--spreadsheet-id` para ela.
