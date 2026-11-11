@@ -17,10 +17,31 @@ Os padrões são aplicados ao campo `title` do CSV, com `re.search`, **sem** nor
 ## Padrões ignorados
 
 - `^IOF de volta de ` — crédito de devolução do IOF. Forma par com a cobrança correspondente abaixo.
-- `^IOF de "` — cobrança de IOF sobre compra internacional. Devolvida pelo par acima, então não é gasto real. O título vem com o comerciante entre aspas escapadas, ex.: `IOF de ""Tfl Travel Ch""`.
+- `^IOF de "` — cobrança de IOF sobre compra internacional, **com o comerciante no título**, entre aspas escapadas, ex.: `IOF de ""Tfl Travel Ch""`. Devolvida pelo par acima, então não é gasto real.
+- `^IOF de compra internacional` — a **mesma cobrança, sem o nome do comerciante**. É o outro título que o Nubank usa para a mesma coisa; os dois aparecem em dado real e nenhum substituiu o outro (ver a seção abaixo). Faltava na lista, e por isso as cobranças desse formato passavam o filtro e entravam como gasto real enquanto as devoluções continuavam sendo descartadas.
 - `^Estorno de "` — estorno de uma compra que já aparece na própria fatura. Valor negativo, ex.: `Estorno de ""Apple.Com/Bill"" (Apple)`.
 - `^Crédito de "` — mesma família do estorno, com outro nome. Visto uma vez, em `Nubank_2026-04-01.csv`: `Crédito de ""Google One""` com `-35.71`. Ficou de fora da lista original e só apareceu quando o relatório começou a classificar assinaturas e mostrou uma assinatura de valor negativo.
 - `^Pagamento recebido` — crédito do pagamento da fatura anterior, não um gasto deste ciclo. Costuma ser o maior valor negativo do arquivo, ex.: `- 10.616,67`.
+
+### A cobrança de IOF tem dois títulos diferentes, e os dois são reais
+
+O Nubank exporta a cobrança de IOF de duas formas, e **as duas aparecem em dado real** — não é uma que substituiu a outra:
+
+| Título | Ciclos onde foi visto | Comerciante no título? |
+|---|---|---|
+| `IOF de "<comerciante>"` | `2026-08` (23 linhas), `2026-09` | sim |
+| `IOF de compra internacional` | `2026-04` (2 linhas), `2026-11` (81 linhas) | **não** |
+
+A devolução nunca mudou: é sempre `IOF de volta de <comerciante>`, com o nome.
+
+Por isso os dois padrões ficam na lista, e **nunca se troca um pelo outro**: um ciclo antigo precisa do formato com aspas, e um ciclo novo do outro. Como o filtro é por `re.search` sobre o título, manter os dois não tem custo nem risco de sobreposição.
+
+O padrão `^IOF de compra internacional` estava faltando, e o efeito era assimétrico — a devolução era descartada, a cobrança não:
+
+- `2026-11`: 81 cobranças, **R$ 251,97**, entravam como gasto real. Com o padrão no lugar, o resíduo do ciclo cai de -R$ 251,03 para R$ 0,94.
+- `2026-04`: 2 cobranças, R$ 5,49, pelo mesmo motivo. O resíduo do ciclo vai a **R$ 0,00** — os pares de abril fecham exatos, o que é a melhor evidência de que o padrão está certo.
+
+Consequência para o relatório: a seção de consumo no exterior deduz o comerciante internacional do título da cobrança (`RE_IOF` em `scripts/relatorio.py`, ancorado no formato com aspas). Num ciclo que usa `IOF de compra internacional` o título não carrega o nome, então essa seção não consegue atribuir valor por comerciante. O nome ainda existe nas **devoluções**, que são a fonte alternativa — mas a devolução costuma cair um ciclo depois da compra, então trocar a fonte muda a semântica da seção e não foi feito aqui.
 
 ### Os pares de IOF NÃO se cancelam exatamente dentro de um ciclo
 
