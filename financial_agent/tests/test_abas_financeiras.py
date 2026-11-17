@@ -250,3 +250,23 @@ def test_fatura_sem_receita_nem_debito_fica_de_fora() -> None:
     """A tabela de saldo é sobre os meses das abas novas, não sobre 8 ciclos."""
     saldo = monta_saldo({"2026-04": Decimal("1000")}, [], [], Decimal("5.78"))
     assert saldo == []
+
+
+# ------------------------------------------------- palavras-chave de assinatura
+
+def test_cuidados_conhecidos_nao_entram_como_palavra_chave() -> None:
+    """O bloco de ressalvas vive dentro de ``## Assinaturas`` e não é chave.
+
+    Regressão: enquanto "Cuidados conhecidos" era negrito em vez de ``###``, o
+    loader ia até o fim da seção e carregava os bullets de lá. ``Spiti*Finclass``
+    virava palavra-chave — justamente o que aquele bullet manda não fazer — e o
+    relatório somava R$ 39,95 por ciclo de um parcelamento ao total de
+    assinaturas. O loader para no primeiro cabeçalho, então basta o ``###``.
+    """
+    from regras import carrega_assinaturas
+
+    chaves = carrega_assinaturas()
+    assert "spiti*finclass" not in chaves
+    assert len(chaves) == 15
+    # As de verdade continuam lá, incluindo a que a ressalva comenta.
+    assert {"anthropic", "netflix", "disney", "openai"} <= set(chaves)

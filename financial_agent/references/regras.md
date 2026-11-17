@@ -85,7 +85,11 @@ Palavras-chave que marcam um comerciante como assinatura digital, usadas pelo re
 - `clube livelo` — programa de pontos
 - `openai` — ChatGPT
 
-**Cuidados conhecidos**, os dois do mesmo tipo — a comparação é por substring, então um nome de comerciante pode conter uma palavra-chave sem ser assinatura:
+### Cuidados conhecidos
+
+Os dois são do mesmo tipo — a comparação é por substring, então um nome de comerciante pode conter uma palavra-chave sem ser assinatura.
+
+Este bloco é um `###` de propósito: o loader para no primeiro cabeçalho, então os bullets daqui **não** entram como palavra-chave. Com ele em negrito, `Spiti*Finclass` era carregado como assinatura — exatamente o que o primeiro bullet diz para não fazer — e somava R$ 39,95 por ciclo ao total de assinaturas do relatório.
 
 - `Spiti*Finclass` parece assinatura mas é parcelamento (`Parcela 11/12`) e acaba sozinho, por isso não está na lista. Se um dia virar assinatura de verdade, acrescente aqui.
 - `disney` pega **`Euro Disney`**, que é o parque em Paris, não o streaming — em `2026-11` são R$ 818,75 de ingresso classificados como assinatura, mais `Euro Disney Associe` e `Euro Disney Associes`. Tirar a palavra-chave não serve: ela é o que pega o `Disney Plus` de verdade. O relatório disfarça o problema porque só mostra serviços presentes em 2 ou mais ciclos, e o parque aparece em um só — mas a lista bruta de assinaturas mostra os três.
