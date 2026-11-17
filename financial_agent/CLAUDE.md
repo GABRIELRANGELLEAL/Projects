@@ -6,6 +6,8 @@ Agente que processa a fatura do cartão de crédito Nubank de ponta a ponta: bus
 
 Também serve para limpar lançamentos de ajuste, identificar parcelamentos e gerar resumos comparativos entre ciclos.
 
+O **relatório** vai além da fatura: lê também as abas `custos mensais no débito` e `Receita` da mesma planilha e cruza as três fontes num saldo mensal. Essas duas abas são mantidas à mão pelo usuário — o pipeline só lê, nunca escreve nelas.
+
 ## Como é acionado
 
 Não é um processo contínuo. Você abre uma sessão do Claude Code e pede algo como "processa a fatura". O Claude lê este arquivo e os de `references/`, e roda `scripts/processa_fatura.py`.
@@ -91,7 +93,11 @@ Para escolher o ciclo a processar, usar `max(ciclo)` sobre os anexos, **não** o
 | Remetente no Gmail | `todomundo@nubank.com.br` |
 | Pasta no Drive (`faturas`) | `1a4k5ieLkaa8ZsngxmS2NTemmusDk4eO9` |
 | Planilha (`life`) | `1efkMTnZV-e6Pp7gAf1NhgGHnWEYeoPGhuWt39o_vwF8` |
-| Aba | `Lançamentos` (`sheetId: 0`) |
+| Aba da fatura (escrita) | `Lançamentos` (`sheetId: 0`) |
+| Aba do débito (só leitura) | `custos mensais no débito` (`sheetId: 276224475`) |
+| Aba da receita (só leitura) | `Receita` (`sheetId: 95756773`) |
+
+A planilha tem ainda uma aba `investimentos`, **fora do escopo deste agente**: nada a lê nem a escreve.
 
 Esses valores vivem em `config.json` e são sobrescrevíveis por flag, para dar para apontar numa planilha de teste sem editar o arquivo versionado.
 
@@ -143,6 +149,54 @@ Linha 2+: 2026-09 | 2026-08-14 | Lime*4 Rides Xbxf         | R$ 186.63 |
 
 Antes de escrever, o script exige o cabeçalho da linha 1 **exatamente igual** e aborta imprimindo esperado vs. encontrado. Isso já provou o próprio valor: pegou justamente essa mudança de layout antes de escrever no lugar errado.
 
+## Contrato das abas `custos mensais no débito` e `Receita`
+
+São **mantidas à mão** pelo usuário e **só lidas** — nem o `processa_fatura.py` nem o `relatorio.py` escrevem nelas. Por isso a leitura é tolerante: linha torta é relatada, não somada como zero, e aba ausente silencia a seção em vez de derrubar o relatório.
+
+### `custos mensais no débito`
+
+```
+Linha 1:  Mes | Nome do gasto | total |  | R$ to EU | $ to EU
+Linha 2+: Nov - 2026 | Moradia | R$3,819 |  | 0.1571 | 0.90869
+          Dec - 2026 | imposto | R$1,200
+```
+
+- Custo fixo pago **no débito**, em R$ — não passa pelo cartão, logo não existe na aba `Lançamentos`.
+- Contém **meses futuros** (planejamento): em 17/11/2026 já havia `Dec - 2026` lançado.
+- As colunas **E e F da linha 2 guardam as taxas de câmbio** para euro, convivendo com os dados. O relatório as acha pelo **rótulo** na linha 1, não por posição, porque uma coluna nova as deslocaria.
+
+### `Receita`
+
+```
+Linha 1:  Mes | empresa | valor em dolar
+Linha 2+: Nov 2026 | Rakbank | 4000
+```
+
+- O valor está **em dólar** e sem símbolo. Numérico puro, diferente do `R$3,819` da aba de custos.
+- O mês vem **sem o hífen** (`Nov 2026`) que a aba de custos usa (`Nov - 2026`). Os dois formatos convivem e o parser aceita ambos — ver abaixo.
+
+### Mês escrito à mão
+
+Três formatos já aparecem na planilha: `Nov - 2026` (custos), `Nov 2026` (receita) e `2024-Apr` (investimentos). `mes_para_ciclo` lê por **tokens** — um ano de 4 dígitos e um nome de mês, em inglês ou português — em vez de exigir um formato fixo, e devolve o ciclo `AAAA-MM` da fatura.
+
+O que não casar vira `None` e a linha sai listada como problema. **Nunca chuta um mês:** mês errado joga o gasto no mês errado e o saldo mente sem ninguém perceber.
+
+### Câmbio: a taxa é derivada, não lida
+
+A planilha **não guarda US$ -> R$**. Guarda as duas pontas para euro, e a taxa sai da razão:
+
+```
+usd_brl = ($ to EU) / (R$ to EU) = 0.90869 / 0.1571 ≈ R$ 5,78 por US$
+```
+
+Decisão de 17/11/2026: o relatório mostra **tudo em R$**, convertendo a receita, para ficar numa só moeda como as seções que já existiam. Sem as duas taxas na aba, a receita aparece só em dólar e o saldo sai `—` — nunca com taxa inventada.
+
+### Valor com `.` e 3 dígitos é recusado
+
+`R$ 3.819` vale 3819 no formato BR e 3,819 no US, e **os dois formatos convivem nesta planilha**. Numa célula com símbolo de moeda e sem vírgula, `valor_us` levanta `ValorIlegivel` em vez de escolher um. Mesmo princípio do validador de milhar do parser de CSV: corrupção silenciosa de valor é o pior erro possível aqui.
+
+Taxa de câmbio (`0.905`, sem símbolo) continua válida — a recusa vale só para valor monetário.
+
 ### Capacidade do grid
 
 211 linhas por ciclo contra um grid de 1000 — a planilha enche em cerca de **três ciclos**. O script cresce o grid com `appendDimension` **antes** de escrever, deixando 200 linhas de folga. Sem isso a execução morre no meio com um erro opaco de "range exceeds grid limits".
@@ -178,7 +232,7 @@ Implementação: **substituir o ciclo** reescrevendo o bloco de dados inteiro.
 | `scripts/processa_fatura.py` | tudo que fala com o Google: auth, Gmail, Drive, Sheets, e a CLI |
 | `scripts/parse_fatura.py` | parser CSV dos passos 1 a 4. `parse_fatura(path, ciclo) -> list[dict]`, rodável isolado com `python scripts/parse_fatura.py caminho.csv` |
 | `scripts/regras.py` | carrega `references/regras.md` em padrões compilados |
-| `scripts/relatorio.py` | relatório em texto, só leitura — nunca escreve na planilha |
+| `scripts/relatorio.py` | relatório em texto das três abas, só leitura — nunca escreve na planilha |
 
 São três de propósito. Um pipeline mensal de um usuário não sustenta mais que isso, e a primeira versão deste projeto tinha sete módulos, nove exit codes, envelope JSON e comando de restore — peso que ninguém ia usar. Se a vontade de dividir voltar, o critério é: só separa quando dois arquivos passarem a ter motivos diferentes para mudar.
 
@@ -204,13 +258,26 @@ O resumo sai em texto no **stdout**; avisos e logs vão para o **stderr**. Em er
 
 Imprime em texto, para ler no terminal ou colar numa conversa. Lê a planilha e **nunca escreve nela** — quem escreve é só o `processa_fatura.py`. Não usa nenhuma dependência além da stdlib e do cliente Google que o pipeline já precisa.
 
-Cinco seções:
+Autentica **uma vez** e passa o cliente para cada leitor de aba; não é só economia de chamada, é não reabrir o consentimento do navegador três vezes na mesma execução.
+
+Oito seções — as cinco da fatura e as três acrescentadas em 17/11/2026:
 
 - **Total por ciclo** — total, variação vs. ciclo anterior (em R$ e %), contagem.
 - **Parcelamentos em aberto** — a partir de `Parcela n/m` do ciclo mais recente, calcula quanto falta pagar, até quando, e o compromisso já assumido em cada ciclo futuro. **Supõe que as parcelas restantes têm o mesmo valor da atual**, o que vale para parcelamento fixo mas não para compra internacional, onde o câmbio muda cada parcela.
 - **Gastos recorrentes** — títulos sem parcelamento que aparecem em 2 ou mais ciclos, separados em dois grupos: os que aparecem em **todos** os ciclos (assinaturas de verdade) e os que aparecem em parte deles (comerciantes repetidos). Essa separação é o que torna o indicador útil; sem ela, supermercado e Netflix ficam na mesma lista.
 - **Consumo, Pix no crédito e exterior** — por ciclo. Lê os CSVs de `out/`, não a planilha, porque depende de linhas que o filtro remove (ver abaixo).
 - **Assinaturas** — custo médio por ciclo e em quantos ciclos cada serviço apareceu, classificado pelas palavras-chave de `references/regras.md`.
+- **Custo fixo no débito** — total por mês com variação, e a matriz gasto × mês (últimos 6 meses) para ver o que mudou de um mês para o outro. Lê a aba `custos mensais no débito`.
+- **Receita** — por mês e empresa, em US$ e convertida para R$, com a taxa usada impressa junto. Lê a aba `Receita`.
+- **Saldo mensal** — cruza as três abas: `receita − custo no débito − fatura do cartão`, um mês por linha.
+
+### Como o saldo mensal alinha as três fontes
+
+A fatura é indexada por **ciclo** (`2026-11` contém compras de outubro) e as abas novas por **mês**. O saldo trata o ciclo como o mês em que a fatura é paga — `ciclo 2026-11` ↔ `Nov - 2026`. É a mesma aproximação que o usuário já faz à mão, e está dita na saída da seção.
+
+A tabela lista só os meses que têm receita **ou** custo no débito; os ~8 ciclos antigos da fatura não entram, senão a seção viraria uma coluna de travessões.
+
+**Mês sem receita sai com saldo `—`, não com saldo negativo.** Receita ausente é dado que falta, não receita zero — e é exatamente o caso dos meses futuros que a aba de custos já tem lançados. Os meses incompletos saem listados no fim da seção, dizendo qual fonte faltou.
 
 ### Por que as duas últimas seções leem `out/` e não a planilha
 
@@ -224,11 +291,14 @@ Houve um dashboard Streamlit aqui, removido em 18/10/2026: o relatório em texto
 
 Decidido em 19/10/2026: **toda vez que o usuário pedir um relatório, entregue os gráficos**, não a tabela em texto. O texto do `relatorio.py` vira a fonte dos números; o que vai para a conversa é um widget único com estes quatro gráficos, nesta ordem, e **pouco texto**.
 
-1. **Três cartões no topo:** valor final da fatura do ciclo mais recente · parcelas a vencer · assinaturas por ciclo.
+1. **Quatro cartões no topo:** valor final da fatura do ciclo mais recente · parcelas a vencer · assinaturas por ciclo · **saldo do mês** (receita − débito − fatura). O saldo é o número que o usuário olha primeiro; se der negativo, o cartão vai em laranja.
 2. **Consumo e Pix no crédito por ciclo** — barras empilhadas, azul `#2a78d6` e laranja `#eb6834`, legenda em HTML acima do gráfico.
 3. **Consumo feito no exterior** — linha, 0 a 100%, um ponto por ciclo.
 4. **Parcelas já comprometidas** — barras, um mês futuro por barra.
 5. **Assinaturas, custo médio por ciclo** — barras horizontais, série única, com o número de ciclos no tooltip.
+6. **Receita vs. saídas por mês** — barras agrupadas, um mês por grupo: receita em azul, saídas (custo no débito + fatura) em laranja. Só os meses que têm receita ou débito. Mês sem receita mostra só a barra de saídas, nunca uma barra zerada, que leria como "receita zero".
+
+O gráfico 6 entrou no fim para não mexer na ordem que o usuário fixou em 19/10/2026. Se o saldo virar o foco, o lugar natural dele é logo depois dos cartões.
 
 Regras de apresentação que o usuário pediu explicitamente: **sem gráfico de categorias** (testado e descartado em 19/10), e o texto fora do widget limitado a três ou quatro linhas de leitura — nunca parágrafos.
 
@@ -240,7 +310,9 @@ Convenções de visualização herdadas da paleta validada: série única usa s�
 - Ao adicionar um novo padrão de lançamento a ignorar, editar `references/regras.md`, não o script — mantém a lógica de negócio separada do código.
 - Valores monetários sempre arredondados a 2 casas decimais na saída. **`Decimal` com `ROUND_HALF_UP` ponta a ponta, nunca `float`.**
 - Datas no formato `AAAA-MM-DD`.
-- Na planilha, valores usam o formato `R$ 1,234.56` dela, que **não** é o formato BR do CSV de entrada.
+- Na planilha, valores usam o formato `R$ 1,234.56` dela, que **não** é o formato BR do CSV de entrada. Isso vale para as três abas: na planilha a vírgula é milhar e o ponto é decimal.
+- Valor ambíguo entre BR e US **levanta erro**, nunca é convertido por palpite.
+- Nas abas mantidas à mão (débito, receita), linha ilegível é **relatada**, não somada como zero, e aba ausente silencia a seção em vez de derrubar o relatório.
 - Segredos nunca entram na árvore do projeto nem no git.
 
 ## Ambiente
@@ -255,7 +327,10 @@ O git CLI **não está instalado** nesta máquina, e `financial_agent/` está *u
 
 Pontos de checagem, em ordem. Cada um é barato de corrigir onde está e caro de descobrir depois.
 
-1. **Testes offline** — `python -m pytest tests -q`. São 85, rodam em 0,1s e validam o parser contra o CSV real de agosto (`tests/fixtures/Nubank_2026-08-25.csv`, 4405 bytes, idêntico ao do Drive): 54 lançamentos, R$ 5.072,63, os 47 descartes distribuídos pelas 4 regras.
+1. **Testes offline** — `python -m pytest tests -q`. São 124, rodam em 0,2s e não tocam a rede.
+   - 85 validam o parser contra o CSV real de agosto (`tests/fixtures/Nubank_2026-08-25.csv`, 4405 bytes, idêntico ao do Drive): 54 lançamentos, R$ 5.072,63, os 47 descartes distribuídos pelas 4 regras.
+   - 39 (`tests/test_abas_financeiras.py`) cobrem as abas de débito e receita contra os dados reais delas, embutidos no arquivo: os três formatos de mês, a recusa do milhar ambíguo, a taxa achada pelo rótulo e o saldo que não inventa número quando falta fonte.
+   - `test_ciclo_do_nome[C:\tmp\...]` só passa no Windows: ele exercita um caminho Windows e `Path` no Linux não separa por `\`. Falha esperada se você rodar os testes fora do Windows.
 2. **Auth** — `--auth-check` deve imprimir a conta `gabrielrangelleal@gmail.com` e os três escopos.
 3. **Parse do ciclo de setembro — a checagem que mais importa.** Rodar com `--csv` sobre `Nubank_2026-09-25.csv` e conferir contra o que você já validou à mão na planilha: **211 lançamentos** e total **R$ 20.075,50**. Se as regras de filtro reproduzem esses dois números, o parser está provado contra dado real; se não, as regras estão erradas — e isso aparece antes de qualquer escrita.
 4. **Planilha** — dry-run primeiro. `apagaria 0` significa que nenhum ciclo existente será tocado; `apagaria N, escritas N` significa que o ciclo está sendo substituído por si mesmo, o que é a prova de idempotência. Para testar sem risco, fazer uma cópia de `life` no Drive e apontar `--spreadsheet-id` para ela.
@@ -267,6 +342,8 @@ Pontos de checagem, em ordem. Cada um é barato de corrigir onde está e caro de
 - Não pede o CSV no app do Nubank por você: esse passo é manual e o pipeline aborta sem ele.
 - Não lida com o PDF da fatura de forma nenhuma: não baixa, não arquiva, não extrai dados dele.
 - Não apaga linhas fora do ciclo alvo, nunca.
+- **Não escreve nas abas `custos mensais no débito` e `Receita`** — só lê. Elas são mantidas à mão.
+- Não lê nem escreve a aba `investimentos`.
 - Não remove nem sobrescreve arquivo no Drive.
 - Não versiona segredos.
 - Não dá conselho financeiro — apenas organiza e resume os dados.
@@ -276,4 +353,8 @@ Pontos de checagem, em ordem. Cada um é barato de corrigir onde está e caro de
 - **A pasta `faturas` do Drive ainda tem os PDFs de `2026-08` e `2026-10`**, enviados antes da decisão de abandonar o PDF. Ficaram lá de propósito: nada neste pipeline apaga arquivo do Drive.
 - **Há ~12 ciclos antigos** (fev/2025 em diante) com e-mail de fatura fechada no Gmail, mas sem CSV. Para carregá-los seria preciso pedir cada extrato no app do Nubank.
 - **Valores são texto na planilha**, logo a coluna D não soma via `SUM` e todo total é recalculado pelo script. Com o bloco de resumo removido, não há nenhum total dentro da planilha — se você quiser um, vale migrar a coluna D para célula numérica com formato de moeda e usar `SUMIF` por ciclo.
+- **A aba de custos tem `honorár` e `honorários` como gastos distintos** em `Dec - 2026` — provavelmente a mesma coisa digitada duas vezes. O relatório mostra os dois separados, porque corrigir nome à mão do usuário seria adivinhar; se forem o mesmo gasto, dá para unificar na planilha.
+- **A receita tem um mês só** (`Nov 2026`). Com dois ou mais, a seção passa a mostrar variação como as outras.
+- **A taxa de câmbio da planilha é um valor fixo digitado**, não cotação do dia: o valor em R$ da receita envelhece junto com ela.
+- **O saldo supõe que ciclo da fatura = mês do débito.** Vale como aproximação, mas a fatura do ciclo `2026-11` contém compras de outubro — quem quiser o caixa exato precisa da data de vencimento, que não está em nenhuma aba.
 - **A conta é presumidamente `@gmail.com` pessoal.** Se for Workspace, o consent screen pode ser *Internal* e a expiração de 7 dias desaparece — vale checar antes do setup.
